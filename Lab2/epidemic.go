@@ -36,6 +36,8 @@ func updateHeartbeatTable(node *Node, channel1 chan []Heartbeat, channel2 chan [
 	//var tempNeighbor0 []Heartbeat
 	//var tempNeighbor1 []Heartbeat
 
+	time.Sleep(200 * time.Millisecond)
+
 	// update node's entry in heartbeat table
 	node.HeartbeatTable[node.ID].NeighborID = node.Neighbors
 	node.HeartbeatTable[node.ID].hbCounter = node.hbCounter
@@ -44,16 +46,16 @@ func updateHeartbeatTable(node *Node, channel1 chan []Heartbeat, channel2 chan [
 	//fmt.Println("current node heartbeat table: ", node.HeartbeatTable)
 
 	channel1 <- node.HeartbeatTable
-	//channel2 <- node.HeartbeatTable
+	channel2 <- node.HeartbeatTable
 
 	fmt.Println("did this finish")
 
 	// update node's neighbors' entries in heartbeat table using channels from other go routines
 
-	//tempNeighbor0 = <-channel1
+	tempNeighbor0 := <-channel1
 	tempNeighbor1 := <-channel2
 
-	//fmt.Println("tempNeighbor0: ", tempNeighbor0)
+	fmt.Println("tempNeighbor0: ", tempNeighbor0)
 	fmt.Println("tempNeighbor1: ", tempNeighbor1)
 
 	// check if tempNeighbor0 is
@@ -144,7 +146,7 @@ func main() {
 	// 8 go routines to incrememnt heartbeat count
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
-		//go incrementHeartbeatCount(&nodes[i])
+		go incrementHeartbeatCount(&nodes[i])
 		//go updateHeartbeatTable(&nodes[i], channels[i-1], channels[i+1])
 	}
 	go updateHeartbeatTable(&nodes[0], channels[7], channels[0])

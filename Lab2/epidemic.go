@@ -8,7 +8,7 @@ import (
 
 // create heartbeat table struct containing neighbor id, heartbeat count, and time
 type Heartbeat struct {
-	NeighborID []int
+	NeighborID int
 	hbCounter  int
 	Time       int64
 }
@@ -31,48 +31,59 @@ func incrementHeartbeatCount(node *Node) {
 	}
 }
 
-// function to update heartbeat table every 100 ms
-func updateHeartbeatTable(node *Node, channel1 chan []Heartbeat, channel2 chan []Heartbeat) {
-	//var tempNeighbor0 []Heartbeat
-	//var tempNeighbor1 []Heartbeat
+// function to update heartbeat table every 200 ms
+func updateHeartbeatTable(node *Node, recChannel1 chan []Heartbeat, recChannel2 chan []Heartbeat, sendChannel1 chan []Heartbeat, sendChannel2 chan []Heartbeat) {
+	// loop forever
+	for {
 
-	time.Sleep(200 * time.Millisecond)
+		// sleep for 200 ms
+		time.Sleep(200 * time.Millisecond)
 
-	// update node's entry in heartbeat table
-	node.HeartbeatTable[node.ID].NeighborID = node.Neighbors
-	node.HeartbeatTable[node.ID].hbCounter = node.hbCounter
-	node.HeartbeatTable[node.ID].Time = time.Now().Unix()
+		// update current node's entry in heartbeat table
+		node.HeartbeatTable[node.ID].NeighborID = node.ID
+		node.HeartbeatTable[node.ID].hbCounter = node.hbCounter
+		node.HeartbeatTable[node.ID].Time = time.Now().Unix()
 
-	//fmt.Println("current node heartbeat table: ", node.HeartbeatTable)
+		//fmt.Println("current node heartbeat table: ", node.HeartbeatTable)
 
-	channel1 <- node.HeartbeatTable
-	channel2 <- node.HeartbeatTable
+		// send current heartbeat table to send channels
+		sendChannel1 <- node.HeartbeatTable
+		sendChannel2 <- node.HeartbeatTable
 
-	fmt.Println("did this finish")
+		// update node's neighbors' entries in heartbeat table using channels from other go routines
 
-	// update node's neighbors' entries in heartbeat table using channels from other go routines
+		// grab neighbor's heartbeat table from receive channels
+		tempNeighbor0 := <-recChannel1
+		tempNeighbor1 := <-recChannel2
 
-	tempNeighbor0 := <-channel1
-	tempNeighbor1 := <-channel2
+		//fmt.Println("tempNeighbor0 for node", node.ID, ": ", tempNeighbor0)
+		//fmt.Println("tempNeighbor1 for node", node.ID, ": ", tempNeighbor1)
 
-	fmt.Println("tempNeighbor0: ", tempNeighbor0)
-	fmt.Println("tempNeighbor1: ", tempNeighbor1)
-
-	// check if tempNeighbor0 is
-
-	//node.HeartbeatTable[neighbor] := receiveChannels(node.ID - 1)
-
-	/*
-		for {
-			time.Sleep(100 * time.Millisecond)
-			for i := 0; i < len(node.HeartbeatTable); i++ {
-				if node.HeartbeatTable[i].NeighborID == node.ID {
-					node.HeartbeatTable[i].hbCounter = node.hbCounter
-					node.HeartbeatTable[i].Time = time.Now().Unix()
-				}
+		// check to see if heartbeat is greater than current time for each node in heartbeat table
+		for i := 0; i < len(tempNeighbor0); i++ {
+			if tempNeighbor0[i].hbCounter > node.HeartbeatTable[i].hbCounter {
+				node.HeartbeatTable[i] = tempNeighbor0[i]
 			}
 		}
-	*/
+
+		for i := 0; i < len(tempNeighbor1); i++ {
+			if tempNeighbor1[i].hbCounter > node.HeartbeatTable[i].hbCounter {
+				node.HeartbeatTable[i] = tempNeighbor1[i]
+			}
+		}
+
+		// if node in heartbeat table hasn't been updated in 10 seconds, remove it
+		for i := 0; i < len(node.HeartbeatTable); i++ {
+			if time.Now().Unix()-node.HeartbeatTable[i].Time > 10 && node.HeartbeatTable[i].Time != 0 {
+				node.HeartbeatTable[i] = node.HeartbeatTable[len(node.HeartbeatTable)-1]
+				node.HeartbeatTable = node.HeartbeatTable[:len(node.HeartbeatTable)-1]
+			}
+		}
+
+		fmt.Println("current node heartbeat table for node ", node.ID, ": ", node.HeartbeatTable)
+
+	}
+
 }
 
 func main() {
@@ -132,7 +143,20 @@ func main() {
 	}
 
 	// create 8 channels to send heartbeat messages
-	channels := []chan []Heartbeat{
+	// counter clockwise channels in ring
+	leftChannels := []chan []Heartbeat{
+		make(chan []Heartbeat, 2),
+		make(chan []Heartbeat, 2),
+		make(chan []Heartbeat, 2),
+		make(chan []Heartbeat, 2),
+		make(chan []Heartbeat, 2),
+		make(chan []Heartbeat, 2),
+		make(chan []Heartbeat, 2),
+		make(chan []Heartbeat, 2),
+	}
+
+	// clockwise channels in ring
+	rightChannels := []chan []Heartbeat{
 		make(chan []Heartbeat, 2),
 		make(chan []Heartbeat, 2),
 		make(chan []Heartbeat, 2),
@@ -149,16 +173,16 @@ func main() {
 		go incrementHeartbeatCount(&nodes[i])
 		//go updateHeartbeatTable(&nodes[i], channels[i-1], channels[i+1])
 	}
-	go updateHeartbeatTable(&nodes[0], channels[7], channels[0])
-	go updateHeartbeatTable(&nodes[1], channels[0], channels[1])
-	go updateHeartbeatTable(&nodes[2], channels[1], channels[2])
-	go updateHeartbeatTable(&nodes[3], channels[2], channels[3])
-	go updateHeartbeatTable(&nodes[4], channels[3], channels[4])
-	go updateHeartbeatTable(&nodes[5], channels[4], channels[5])
-	go updateHeartbeatTable(&nodes[6], channels[5], channels[6])
-	go updateHeartbeatTable(&nodes[7], channels[6], channels[7])
+	go updateHeartbeatTable(&nodes[0], rightChannels[7], leftChannels[0], leftChannels[7], rightChannels[0])
+	go updateHeartbeatTable(&nodes[1], rightChannels[0], leftChannels[1], leftChannels[0], rightChannels[1])
+	go updateHeartbeatTable(&nodes[2], rightChannels[1], leftChannels[2], leftChannels[1], rightChannels[2])
+	go updateHeartbeatTable(&nodes[3], rightChannels[2], leftChannels[3], leftChannels[2], rightChannels[3])
+	go updateHeartbeatTable(&nodes[4], rightChannels[3], leftChannels[4], leftChannels[3], rightChannels[4])
+	go updateHeartbeatTable(&nodes[5], rightChannels[4], leftChannels[5], leftChannels[4], rightChannels[5])
+	go updateHeartbeatTable(&nodes[6], rightChannels[5], leftChannels[6], leftChannels[5], rightChannels[6])
+	go updateHeartbeatTable(&nodes[7], rightChannels[6], leftChannels[7], leftChannels[6], rightChannels[7])
 
-	time.Sleep(2 * time.Second)
+	//time.Sleep(2 * time.Second)
 	/*
 		fmt.Println("channel 0: ", <-channels[0])
 		fmt.Println("channel 1: ", <-channels[1])
@@ -169,7 +193,7 @@ func main() {
 		fmt.Println("channel 6: ", <-channels[6])
 		fmt.Println("channel 7: ", <-channels[7])
 	*/
-	//wg.Wait()
+	wg.Wait()
 
 	// create 8 go routines to send heartbeat messages
 

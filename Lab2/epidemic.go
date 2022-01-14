@@ -11,6 +11,7 @@ type Heartbeat struct {
 	NeighborID int
 	hbCounter  int
 	Time       int64
+	Fail       bool
 }
 
 // create node struct
@@ -22,20 +23,49 @@ type Node struct {
 }
 
 // function to increment HeartbeatCount every 20 ms
-func incrementHeartbeatCount(node *Node) {
+func (node *Node) incrementHeartbeatCount() {
 	fmt.Println("Starting heartbeat count for node", node.ID)
 	for {
 		time.Sleep(20 * time.Millisecond)
 		node.hbCounter++
+		node.HeartbeatTable[node.ID].Time = time.Now().Unix()
+		//fmt.Println("Heartbeat Count for node", node.ID, ": ", node.hbCounter)
+	}
+}
+
+// function to fail increment HeartbeatCount every 20 ms
+func (node *Node) incrementHeartbeatCountFail() {
+	fmt.Println("Starting heartbeat count for node", node.ID)
+	for {
+		time.Sleep(20 * time.Millisecond)
+		node.hbCounter++
+
 		//fmt.Println("Heartbeat Count for node", node.ID, ": ", node.hbCounter)
 	}
 }
 
 // function to update heartbeat table every 200 ms
-func updateHeartbeatTable(node *Node, recChannel1 chan []Heartbeat, recChannel2 chan []Heartbeat, sendChannel1 chan []Heartbeat, sendChannel2 chan []Heartbeat) {
+func (node *Node) updateHeartbeatTable(recChannel1 chan []Heartbeat, recChannel2 chan []Heartbeat, sendChannel1 chan []Heartbeat, sendChannel2 chan []Heartbeat) {
+
+	//failedNeighbor := 3
+	//deleteFlag := 0
+	var tempNeighbor0 []Heartbeat
+	var tempNeighbor1 []Heartbeat
+
+	// starting current node heartbeat values
+	node.HeartbeatTable[node.ID].NeighborID = node.ID
+	node.HeartbeatTable[node.ID].hbCounter = node.hbCounter
+	node.HeartbeatTable[node.ID].Time = time.Now().Unix()
+
+	// sending initial data to neighbors
+	sendChannel1 <- node.HeartbeatTable
+	sendChannel2 <- node.HeartbeatTable
+
+	i := 0
+	deadFlag := 0
 	// loop forever
 	for {
-
+		i++
 		// sleep for 200 ms
 		time.Sleep(200 * time.Millisecond)
 
@@ -45,41 +75,132 @@ func updateHeartbeatTable(node *Node, recChannel1 chan []Heartbeat, recChannel2 
 		node.HeartbeatTable[node.ID].Time = time.Now().Unix()
 
 		//fmt.Println("current node heartbeat table: ", node.HeartbeatTable)
+		// simulate node failing
+		if node.ID == 3 {
+			switch i {
+			case 20:
+				fmt.Println("Node", node.ID, "failed")
+				close(sendChannel1)
+				close(sendChannel2)
+				//close(recChannel1)
+				//close(recChannel2)
+				deadFlag = 1
+			default:
+				// do nothing
+			}
+		}
+		if deadFlag == 1 {
+			break
+		}
 
-		// send current heartbeat table to send channels
-		sendChannel1 <- node.HeartbeatTable
-		sendChannel2 <- node.HeartbeatTable
+		select {
+		case tempNeighbor0 = <-recChannel1:
+			select {
+			case sendChannel1 <- node.HeartbeatTable:
+				// message sent
+				// check to see if heartbeat is greater than current time for each node in heartbeat table
+				for i := 0; i < len(node.HeartbeatTable); i++ {
+					if tempNeighbor0[i].hbCounter > node.HeartbeatTable[i].hbCounter || tempNeighbor0[i].Fail == true {
+						node.HeartbeatTable[i] = tempNeighbor0[i]
+					}
+				}
+			default:
+				// do nothing
+			}
 
-		// update node's neighbors' entries in heartbeat table using channels from other go routines
+		default:
+			// do nothing
+		}
 
-		// grab neighbor's heartbeat table from receive channels
-		tempNeighbor0 := <-recChannel1
-		tempNeighbor1 := <-recChannel2
+		select {
+		case tempNeighbor1 = <-recChannel2:
+			select {
+			case sendChannel2 <- node.HeartbeatTable:
+				// message sent
 
+				for i := 0; i < len(tempNeighbor1); i++ {
+					if tempNeighbor1[i].hbCounter > node.HeartbeatTable[i].hbCounter || tempNeighbor1[i].Fail == true {
+						node.HeartbeatTable[i] = tempNeighbor1[i]
+					}
+				}
+			default:
+				// do nothing
+			}
+		default:
+			// do nothing
+		}
+
+		// if neighbor hasn't sent heartbeat for more than 3 seconds, remove from heartbeat table
+		for i := 0; i < len(node.Neighbors); i++ {
+			if time.Now().Unix()-node.HeartbeatTable[node.Neighbors[i]].Time > 3 && node.HeartbeatTable[node.Neighbors[i]].Time != 0 {
+				//fmt.Println("Node", node.ID, "removed neighbor", node.Neighbors[i])
+				node.HeartbeatTable[node.Neighbors[i]] = Heartbeat{}
+				node.HeartbeatTable[node.Neighbors[i]].Fail = true
+				//deleteFlag = 1
+			}
+		}
+
+		/*
+			// send current heartbeat table to send channels
+			// checks to see if node has failed
+			if failedNeighbor == 1 {
+				sendChannel1 <- node.HeartbeatTable
+			} else if failedNeighbor == 0 {
+				sendChannel2 <- node.HeartbeatTable
+			} else if failedNeighbor == 2 {
+				// do nothing if both neighbors have failed
+			} else {
+				sendChannel1 <- node.HeartbeatTable
+				sendChannel2 <- node.HeartbeatTable
+			}
+
+			// grab neighbor's heartbeat table from receive channels
+			// checks to see if node has failed
+			if failedNeighbor == 1 {
+				tempNeighbor0 = <-recChannel1
+			} else if failedNeighbor == 0 {
+				tempNeighbor1 = <-recChannel2
+			} else if failedNeighbor == 2 {
+				// do nothing if both neighbors have failed
+			} else {
+				tempNeighbor0 = <-recChannel1
+				tempNeighbor0 = <-recChannel2
+			}
+		*/
 		//fmt.Println("tempNeighbor0 for node", node.ID, ": ", tempNeighbor0)
 		//fmt.Println("tempNeighbor1 for node", node.ID, ": ", tempNeighbor1)
+		/*
+			// checks to see if either of the neighbor's heartbeat counts are the same as last cycle
+			if deleteFlag == 0 && len(tempNeighbor0) != 0 {
+				if node.HeartbeatTable[node.Neighbors[0]].hbCounter == tempNeighbor0[node.Neighbors[0]].hbCounter || node.HeartbeatTable[node.Neighbors[1]].hbCounter == tempNeighbor0[node.Neighbors[1]].hbCounter {
 
-		// check to see if heartbeat is greater than current time for each node in heartbeat table
-		for i := 0; i < len(tempNeighbor0); i++ {
-			if tempNeighbor0[i].hbCounter > node.HeartbeatTable[i].hbCounter {
-				node.HeartbeatTable[i] = tempNeighbor0[i]
+					// if neighbor's heartbeat hasn't changed in 10 seconds, remove from heartbeat table
+					for i := 0; i < len(node.Neighbors); i++ {
+						// checks to see if a specific amount of time has passed
+						if node.HeartbeatTable[node.Neighbors[i]].Time < time.Now().Unix()-10 && node.HeartbeatTable[node.Neighbors[i]].Time != 0 {
+							deleteFlag = 1
+							// case if both neighbors have failed
+							if failedNeighbor == 0 || failedNeighbor == 1 {
+								failedNeighbor = 2
+							} else {
+								failedNeighbor = i
+							}
+						}
+					}
+				}
+			} else if deleteFlag == 1 {
+				// remove neighbor from heartbeat table
+				node.HeartbeatTable[node.Neighbors[failedNeighbor]] = Heartbeat{}
+				deleteFlag = 0
 			}
-		}
 
-		for i := 0; i < len(tempNeighbor1); i++ {
-			if tempNeighbor1[i].hbCounter > node.HeartbeatTable[i].hbCounter {
-				node.HeartbeatTable[i] = tempNeighbor1[i]
+			// close channel to failed neighbor
+			if failedNeighbor == 0 {
+				close(recChannel1)
+			} else if failedNeighbor == 1 {
+				close(recChannel2)
 			}
-		}
-
-		// if node in heartbeat table hasn't been updated in 10 seconds, remove it
-		for i := 0; i < len(node.HeartbeatTable); i++ {
-			if time.Now().Unix()-node.HeartbeatTable[i].Time > 10 && node.HeartbeatTable[i].Time != 0 {
-				node.HeartbeatTable[i] = node.HeartbeatTable[len(node.HeartbeatTable)-1]
-				node.HeartbeatTable = node.HeartbeatTable[:len(node.HeartbeatTable)-1]
-			}
-		}
-
+		*/
 		fmt.Println("current node heartbeat table for node ", node.ID, ": ", node.HeartbeatTable)
 
 	}
@@ -168,19 +289,20 @@ func main() {
 	}
 
 	// 8 go routines to incrememnt heartbeat count
-	for i := 0; i < 8; i++ {
+	for i := 0; i < 7; i++ {
 		wg.Add(1)
-		go incrementHeartbeatCount(&nodes[i])
+		go nodes[i].incrementHeartbeatCount()
 		//go updateHeartbeatTable(&nodes[i], channels[i-1], channels[i+1])
 	}
-	go updateHeartbeatTable(&nodes[0], rightChannels[7], leftChannels[0], leftChannels[7], rightChannels[0])
-	go updateHeartbeatTable(&nodes[1], rightChannels[0], leftChannels[1], leftChannels[0], rightChannels[1])
-	go updateHeartbeatTable(&nodes[2], rightChannels[1], leftChannels[2], leftChannels[1], rightChannels[2])
-	go updateHeartbeatTable(&nodes[3], rightChannels[2], leftChannels[3], leftChannels[2], rightChannels[3])
-	go updateHeartbeatTable(&nodes[4], rightChannels[3], leftChannels[4], leftChannels[3], rightChannels[4])
-	go updateHeartbeatTable(&nodes[5], rightChannels[4], leftChannels[5], leftChannels[4], rightChannels[5])
-	go updateHeartbeatTable(&nodes[6], rightChannels[5], leftChannels[6], leftChannels[5], rightChannels[6])
-	go updateHeartbeatTable(&nodes[7], rightChannels[6], leftChannels[7], leftChannels[6], rightChannels[7])
+	go nodes[7].incrementHeartbeatCountFail()
+	go nodes[0].updateHeartbeatTable(rightChannels[7], leftChannels[0], leftChannels[7], rightChannels[0])
+	go nodes[1].updateHeartbeatTable(rightChannels[0], leftChannels[1], leftChannels[0], rightChannels[1])
+	go nodes[2].updateHeartbeatTable(rightChannels[1], leftChannels[2], leftChannels[1], rightChannels[2])
+	go nodes[3].updateHeartbeatTable(rightChannels[2], leftChannels[3], leftChannels[2], rightChannels[3])
+	go nodes[4].updateHeartbeatTable(rightChannels[3], leftChannels[4], leftChannels[3], rightChannels[4])
+	go nodes[5].updateHeartbeatTable(rightChannels[4], leftChannels[5], leftChannels[4], rightChannels[5])
+	go nodes[6].updateHeartbeatTable(rightChannels[5], leftChannels[6], leftChannels[5], rightChannels[6])
+	go nodes[7].updateHeartbeatTable(rightChannels[6], leftChannels[7], leftChannels[6], rightChannels[7])
 
 	//time.Sleep(2 * time.Second)
 	/*

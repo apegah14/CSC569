@@ -51,6 +51,7 @@ func (node *Node) updateHeartbeatTable(recChannel1 chan []Heartbeat, recChannel2
 	//deleteFlag := 0
 	var tempNeighbor0 []Heartbeat
 	var tempNeighbor1 []Heartbeat
+	var failTime int64
 
 	// starting current node heartbeat values
 	node.HeartbeatTable[node.ID].NeighborID = node.ID
@@ -63,6 +64,7 @@ func (node *Node) updateHeartbeatTable(recChannel1 chan []Heartbeat, recChannel2
 
 	i := 0
 	deadFlag := 0
+	failTime = 0
 	// loop forever
 	for {
 		i++
@@ -78,21 +80,35 @@ func (node *Node) updateHeartbeatTable(recChannel1 chan []Heartbeat, recChannel2
 		// simulate node failing
 		if node.ID == 3 {
 			switch i {
-			case 20:
+			case 10:
+				// close channel to stop sending data to neighbors
 				fmt.Println("Node", node.ID, "failed")
 				close(sendChannel1)
 				close(sendChannel2)
-				//close(recChannel1)
-				//close(recChannel2)
 				deadFlag = 1
 			default:
 				// do nothing
 			}
 		}
+
+		if node.ID == 4 {
+			switch i {
+			case 100:
+				// close channel to stop sending data to neighbors
+				fmt.Println("Node", node.ID, "failed")
+				close(sendChannel1)
+				close(sendChannel2)
+				deadFlag = 1
+			default:
+				// do nothing
+			}
+		}
+		// break out of goroutine if node is dead
 		if deadFlag == 1 {
 			break
 		}
 
+		// check if channel has new data
 		select {
 		case tempNeighbor0 = <-recChannel1:
 			select {
@@ -100,7 +116,10 @@ func (node *Node) updateHeartbeatTable(recChannel1 chan []Heartbeat, recChannel2
 				// message sent
 				// check to see if heartbeat is greater than current time for each node in heartbeat table
 				for i := 0; i < len(node.HeartbeatTable); i++ {
-					if tempNeighbor0[i].hbCounter > node.HeartbeatTable[i].hbCounter || tempNeighbor0[i].Fail == true {
+					// don't replace dead node with bad info
+					if node.HeartbeatTable[i].hbCounter == 0 && node.HeartbeatTable[i].Fail == true {
+						// do nothing
+					} else if (tempNeighbor0[i].hbCounter > node.HeartbeatTable[i].hbCounter && tempNeighbor0[i].Fail == false) || tempNeighbor0[i].Fail == true {
 						node.HeartbeatTable[i] = tempNeighbor0[i]
 					}
 				}
@@ -119,7 +138,9 @@ func (node *Node) updateHeartbeatTable(recChannel1 chan []Heartbeat, recChannel2
 				// message sent
 
 				for i := 0; i < len(tempNeighbor1); i++ {
-					if tempNeighbor1[i].hbCounter > node.HeartbeatTable[i].hbCounter || tempNeighbor1[i].Fail == true {
+					if node.HeartbeatTable[i].hbCounter == 0 && node.HeartbeatTable[i].Fail == true {
+						// do nothing
+					} else if (tempNeighbor1[i].hbCounter > node.HeartbeatTable[i].hbCounter && tempNeighbor1[i].Fail == false) || tempNeighbor1[i].Fail == true {
 						node.HeartbeatTable[i] = tempNeighbor1[i]
 					}
 				}
@@ -130,13 +151,21 @@ func (node *Node) updateHeartbeatTable(recChannel1 chan []Heartbeat, recChannel2
 			// do nothing
 		}
 
-		// if neighbor hasn't sent heartbeat for more than 3 seconds, remove from heartbeat table
+		// if neighbor hasn't sent heartbeat for more than 3 seconds, flag it for removal from heartbeat table
 		for i := 0; i < len(node.Neighbors); i++ {
-			if time.Now().Unix()-node.HeartbeatTable[node.Neighbors[i]].Time > 3 && node.HeartbeatTable[node.Neighbors[i]].Time != 0 {
+			if time.Now().Unix()-node.HeartbeatTable[node.Neighbors[i]].Time > 3 && node.HeartbeatTable[node.Neighbors[i]].Time != 0 && node.HeartbeatTable[node.Neighbors[i]].Fail == false {
 				//fmt.Println("Node", node.ID, "removed neighbor", node.Neighbors[i])
-				node.HeartbeatTable[node.Neighbors[i]] = Heartbeat{}
 				node.HeartbeatTable[node.Neighbors[i]].Fail = true
+				failTime = time.Now().Unix()
+				fmt.Println(failTime)
 				//deleteFlag = 1
+				// if neighbor has had fail flag for more than 3 seconds, remove it from heartbeat table
+			} else if time.Now().Unix()-failTime > 1 && node.HeartbeatTable[node.Neighbors[i]].Fail == true && failTime != 0 {
+				fmt.Println(time.Now().Unix())
+				node.HeartbeatTable[node.Neighbors[i]] = Heartbeat{}
+				node.HeartbeatTable[node.Neighbors[i]].NeighborID = node.Neighbors[i]
+				node.HeartbeatTable[node.Neighbors[i]].Fail = true
+				failTime = 0
 			}
 		}
 

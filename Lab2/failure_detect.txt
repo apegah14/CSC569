@@ -1,4 +1,0 @@
-In case of failure
-1. check to see if the neighbors have not updated in a while
-2. If neighbors have not updated in a while, remove that neighbor's entry in the table
-3. Close channel correseponding with the neighbor that is dead
